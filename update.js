@@ -20,7 +20,7 @@ const healthReport = {
 
 const STREAM_SUFFIXES = [
     { name: "patron", path: `patron/${SUFFIX}` },
-    { name: "zirve", path: `zirve/${SUFFIX}` },
+    { name: "zirve", path: `zirve/mono/${SUFFIX}` },
     { name: "yayin1", path: `yayin1/${SUFFIX}` },
     { name: "inat", path: `inat/${SUFFIX}` },
     { name: "b2", path: `b2/${SUFFIX}` },
