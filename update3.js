@@ -1,3 +1,4 @@
+
 import fs from "fs";
 import path from "path";
 
@@ -14,22 +15,11 @@ const M3U8_HEADER = `#EXTM3U
 #EXT-X-VERSION:3
 #EXT-X-STREAM-INF:BANDWIDTH=5500000,AVERAGE-BANDWIDTH=8976000,RESOLUTION=1920x1080,CODECS="avc1.640028,mp4a.40.2",FRAME-RATE=25`;
 
-async function fetchNoRedirect(url) {
-  const res = await fetch(url, {
-    headers: HEADERS,
-    redirect: "manual",
-  });
-  return res;
-}
-
-async function getBaseDomain() {
-  const fallback = "https://atomsportv519.top";
-
+async function getStreamUrl() {
   let currentUrl = START_URL;
   let referer = HEADERS.Referer;
 
   try {
-    // Follow redirects manually so we can identify the failing URL.
     for (let i = 0; i < 10; i++) {
       console.log(`Requesting: ${currentUrl}`);
 
@@ -59,145 +49,58 @@ async function getBaseDomain() {
         response.status < 400 &&
         location
       ) {
+        await response.body?.cancel();
+
         referer = currentUrl;
         currentUrl = new URL(location, currentUrl).href;
         continue;
       }
 
       if (!response.ok) {
-        throw new Error(
-          `HTTP ${response.status} at ${currentUrl}`
-        );
+        throw new Error(`HTTP ${response.status} at ${currentUrl}`);
       }
 
       const html = await response.text();
 
-      const match = html.match(
-        /fetch\s*\(\s*(["'])(https?:\/\/[^/"']+)\/load\/channels\.php(?:\?[^"']*)?\1\s*\)/i
+      const sourceMatch = html.match(
+        /\bsource\s*:\s*(['"])(https?:\/\/[^'"]+)\1/i
       );
 
-      if (match) {
-        console.log("Detected base domain:", match[2]);
-        return match[2];
+      const streamUrl = sourceMatch?.[2] ?? null;
+
+      if (streamUrl) {
+        console.log("Detected stream:", streamUrl);
+        return streamUrl;
       }
 
-      console.warn(
-        `The expected fetch() pattern was not found in ${currentUrl}`
-      );
-
-      break;
+      throw new Error(`Source URL not found in ${currentUrl}`);
     }
 
-    console.warn("Using fallback domain:", fallback);
-    return fallback;
+    throw new Error("Too many redirects.");
   } catch (e) {
-    console.error("Failed to detect base domain:", e.message);
-    console.warn("Using fallback domain:", fallback);
-    return fallback;
-  }
-}
-
-async function getChannelM3u8(channelId, baseDomain) {
-  try {
-    const matchesUrl = `${baseDomain}/load/yayinlink.php?id=${channelId}`;
-    
-    const response = await fetch(matchesUrl, {
-      headers: HEADERS,
-    });
-
-    if (!response.ok) {
-      console.warn(`${channelId}: HTTP ${response.status}`);
-      return null;
-    }
-
-    const data = await response.json();
-
-    if (
-      typeof data.deismackanal === "string" &&
-      data.deismackanal.trim()
-    ) {
-      return data.deismackanal.trim();
-    }
-
-    console.warn(`${channelId}: Missing deismackanal field`);
-    return null;
-  } catch (e) {
-    console.warn(`${channelId}: ${e.message}`);
+    console.error("Failed to get stream:", e.message);
     return null;
   }
 }
 
 async function main() {
-  if (!fs.existsSync(OUTPUT_FOLDER)) {
-    fs.mkdirSync(OUTPUT_FOLDER);
+  fs.mkdirSync(OUTPUT_FOLDER, { recursive: true });
+
+  console.log("Scanning stream...");
+
+  const streamUrl = await getStreamUrl();
+
+  if (!streamUrl) {
+    console.warn("No stream found.");
+    return;
   }
 
-  const baseDomain = await getBaseDomain();
+  const fileName = path.basename(new URL(streamUrl).pathname);
+  const filePath = path.join(OUTPUT_FOLDER, "bein-sports-1.m3u8");
 
-  const mainChannels = [
-    { id: "bein-sports-1" },
-    { id: "bein-sports-2" },
-    { id: "bein-sports-3" },
-    { id: "bein-sports-4" },
-    { id: "bein-sports-5" },
-    { id: "bein-sports-max-1" },
-    { id: "bein-sports-max-2" },
-    { id: "s-sport" },
-    { id: "s-sport-2" },
-    { id: "tivibu-spor" },
-    { id: "tivibu-spor-1" },
-    { id: "tivibu-spor-2" },
-    { id: "tivibu-spor-3" },
-    { id: "trt-spor" },
-    { id: "trt-yildiz" },
-    { id: "trt-1" },
-    { id: "a-spor" }
-  ];
+  fs.writeFileSync(filePath, `${M3U8_HEADER}\n${streamUrl}`);
 
-  const tabiiList = [
-    "tabii",
-    "tabii1",
-    "tabii2",
-    "tabii3",
-    "tabii4",
-    "tabii5",
-    "tabii6",
-  ];
-
-  let templateUrl = null;
-
-  console.log("Scanning streams...");
-
-  for (const ch of mainChannels) {
-    const url = await getChannelM3u8(ch.id, baseDomain);
-
-    if (url) {
-      if (!templateUrl) templateUrl = url;
-
-      const filePath = path.join(OUTPUT_FOLDER, `${ch.id}.m3u8`);
-      fs.writeFileSync(filePath, `${M3U8_HEADER}\n${url}`);
-
-      console.log(`Saved ${ch.id}`);
-    } else {
-      console.log(`No stream found for ${ch.id}`);
-    }
-  }
-
-  if (templateUrl) {
-    const parts = templateUrl.split("/");
-    const baseHlsUrl = parts.slice(0, -1).join("/");
-
-    for (const tId of tabiiList) {
-      const finalUrl = `${baseHlsUrl}/${tId}.m3u8`;
-
-      const filePath = path.join(OUTPUT_FOLDER, `${tId}.m3u8`);
-      fs.writeFileSync(filePath, `${M3U8_HEADER}\n${finalUrl}`);
-
-      console.log(`${tId}.m3u8 -> Stream: ${tId}.m3u8`);
-    }
-  } else {
-    console.warn("No template stream found; skipping tabii streams.");
-  }
+  console.log(`Saved ${filePath}`);
 }
 
 main();
